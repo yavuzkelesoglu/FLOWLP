@@ -1,0 +1,38 @@
+KULLANICI DENEYİM AKIŞI
+1) Sayfa yüklendiğinde yapay zeka otomatik bir şekilde ilk mesajı göndersin.
+Mesaj örneği:
+“Merhaba! Koçluk eğitimi hakkında merak ettiğin her şeyi sana hızlıca anlatabilirim. Başlamak ister misin?”
+Bu mesaj ekranda otomatik görünsün.
+2) Kullanıcı ilk cevabı yazdıktan sonra
+AI ikinci mesaj olarak kullanıcıdan bilgi toplasın:
+“Bu arada seni daha iyi destekleyebilmem için adını, telefon numaranı ve e-posta adresini de alabilir miyim?”
+Kullanıcı bu bilgiyi tek mesajda veya parça parça yazabilir.
+AI bunu algılayıp JSON formatında backend’e göndersin (ör: {name: "...", phone:"...", email:"..."}).
+3) Chat boyunca yapay zekanın rolü
+AI hem satış temsilcisi hem de eğitim danışmanı gibi konuşacak.
+Eğitim hakkında açıklayıcı bilgiler verecek
+Kullanıcının ilgisini canlı tutacak
+Profesyonel ama samimi bir tonda yönlendirecek
+Sonunda kullanıcıyı eğitimi satın almaya veya başvuru bırakmaya yönlendirecek
+“İstersen seni hemen ön kayda alabilirim” tarzı satış CTA'ları olacak
+TEKNİK İSTEKLER
+Frontend
+HTML / CSS / JS (veya React, fark etmez; Replit ne öneriyorsa o kullanılabilir)
+Minimal, temiz, modern bir landing page tasarımı
+Ekranın ortasında kart tasarımlı bir chat alanı
+Kullanıcı mesajları sağda, AI mesajları solda görünsün
+Mesaj yazma kutusu aşağıda sabit olsun
+AI'nın ilk mesajı sayfa yüklenince otomatik gözüksün
+Backend
+OpenAI Chat Completions API kullanılacak
+API çağrıları güvenli şekilde backend üzerinden yapılacak
+Kullanıcı bilgileri yakalandığında backend’e JSON olarak iletilecek (şimdilik loglanabilir)
+AI Davranışı
+Aşağıdaki sistem prompt’u backend’e göm:
+“SEN, koçluk eğitimi hakkında bilgi veren bir AI eğitim danışmanısın. Aynı zamanda satış temsilcisi gibi yönlendirici ve ikna edici şekilde konuşursun. İlk mesajı sayfa açıldığında otomatik gönderirsin. İkinci mesajında mutlaka kullanıcıdan ad, telefon ve e-posta istersin. Konuşma boyunca profesyonel ama sıcak bir ton kullanır, kullanıcıyı eğitime kayıt olmaya yönlendirirsin.”
+Ek Özellikler
+Kullanıcı bilgileri eksikse AI nazikçe tekrar ister
+Sohbet geçmişi ekranda kalır
+Mesaj gönderildiğinde “yazıyor...” animasyonu eklenebilir (opsiyonel)
+DELIVERABLE
+Replit bana tam çalışan bir landing page + basit backend + çalışan ChatGPT entegrasyonu içeren bir proje oluşturmalı.
