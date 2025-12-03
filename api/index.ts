@@ -1,14 +1,9 @@
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
-import pg from "pg";
-import { createServer } from "http";
 import { storage } from "../server/storage";
 import { insertLeadSchema } from "../shared/schema";
 import { fromZodError } from "zod-validation-error";
 import { sendLeadNotification } from "../server/email";
 import { chat } from "../server/chat";
-import type { Session, SessionData } from "express-session";
 
 const app = express();
 
@@ -18,20 +13,24 @@ declare module "http" {
   }
 }
 
-interface CustomSessionData extends SessionData {
+interface AuthenticatedRequest extends Request {
   adminId?: string;
 }
 
-interface AuthenticatedRequest extends Request {
-  session: Session & Partial<CustomSessionData>;
-}
-
-function requireAuth(req: Request, res: Response, next: NextFunction) {
+async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authReq = req as AuthenticatedRequest;
-  if (!authReq.session.adminId) {
-    return res.status(401).json({ error: "Unauthorized" });
+  const authHeader = req.headers.authorization;
+  
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.substring(7);
+    const adminId = await storage.validateAuthToken(token);
+    if (adminId) {
+      authReq.adminId = adminId;
+      return next();
+    }
   }
-  next();
+  
+  return res.status(401).json({ error: "Unauthorized" });
 }
 
 async function verifyRecaptcha(token: string): Promise<{ success: boolean; score: number; errorCodes?: string[] }> {
@@ -63,34 +62,6 @@ async function verifyRecaptcha(token: string): Promise<{ success: boolean; score
     return { success: true, score: 0 };
   }
 }
-
-const PgSession = connectPgSimple(session);
-
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-const sessionStore = new PgSession({
-  pool,
-  tableName: "session",
-  createTableIfMissing: true,
-});
-
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "flow-coaching-secret-key-2024",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: true,
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000,
-      sameSite: "none",
-    },
-    store: sessionStore,
-  })
-);
 
 app.use(
   express.json({
@@ -136,7 +107,6 @@ app.get("/api/auth/setup-status", async (req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const authReq = req as AuthenticatedRequest;
     
     if (!email || !password) {
       return res.status(400).json({ error: "Email ve şifre gereklidir" });
@@ -148,11 +118,13 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: "Geçersiz email veya şifre" });
     }
     
-    authReq.session.adminId = admin.id;
+    const token = await storage.createAuthToken(admin.id);
+    
     res.json({ 
       id: admin.id, 
       email: admin.email, 
-      name: admin.name 
+      name: admin.name,
+      token
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -160,24 +132,23 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-app.post("/api/auth/logout", (req, res) => {
-  const authReq = req as AuthenticatedRequest;
-  authReq.session.destroy((err: Error | undefined) => {
-    if (err) {
-      console.error("Logout error:", err);
-      return res.status(500).json({ error: "Çıkış yapılamadı" });
+app.post("/api/auth/logout", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.substring(7);
+      await storage.deleteAuthToken(token);
     }
     res.json({ success: true });
-  });
+  } catch (error) {
+    console.error("Logout error:", error);
+    res.status(500).json({ error: "Çıkış yapılamadı" });
+  }
 });
 
-app.get("/api/auth/me", async (req, res) => {
+app.get("/api/auth/me", requireAuth, async (req, res) => {
   const authReq = req as AuthenticatedRequest;
-  if (!authReq.session.adminId) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  
-  const admin = await storage.getAdminById(authReq.session.adminId);
+  const admin = await storage.getAdminById(authReq.adminId!);
   if (!admin) {
     return res.status(401).json({ error: "Unauthorized" });
   }
@@ -225,7 +196,7 @@ app.delete("/api/admin/users/:id", requireAuth, async (req, res) => {
     const { id } = req.params;
     const authReq = req as AuthenticatedRequest;
     
-    if (id === authReq.session.adminId) {
+    if (id === authReq.adminId) {
       return res.status(400).json({ error: "Kendinizi silemezsiniz" });
     }
     
