@@ -35,21 +35,33 @@ export const authTokens = pgTable("auth_tokens", {
 
 // Manual Zod schemas to avoid UUID pattern validation issues with createInsertSchema
 export const insertLeadSchema = z.object({
-  fullName: z.string().min(1, "Ad Soyad gereklidir"),
-  email: z.string().email("Geçerli bir e-posta adresi giriniz"),
-  phone: z.string().min(1, "Telefon numarası gereklidir"),
-  consent: z.boolean().default(false),
+  fullName: z.string().trim().min(2, "Ad Soyad en az 2 karakter olmalıdır."),
+  email: z.string().trim().email("Geçerli bir e-posta adresi giriniz"),
+  phone: z
+    .string()
+    .trim()
+    .min(10, "Geçerli bir telefon numarası giriniz."),
+  consent: z
+    .boolean()
+    .refine((value) => value === true, {
+      message: "Devam etmek için KVKK onayını kabul etmelisiniz.",
+    }),
 });
 
 export const insertSettingSchema = z.object({
-  key: z.string().min(1),
-  value: z.string().min(1),
+  key: z.string().trim().min(1, "Anahtar değeri gereklidir"),
+  value: z.string().trim().min(1, "Değer alanı gereklidir"),
 });
 
 export const insertAdminUserSchema = z.object({
-  email: z.string().email("Geçerli bir e-posta adresi giriniz"),
-  password: z.string().min(1, "Şifre gereklidir"),
-  name: z.string().min(1, "Ad gereklidir"),
+  email: z.string().trim().email("Geçerli bir e-posta adresi giriniz"),
+  password: z
+    .string()
+    .min(6, "Şifre en az 6 karakter olmalıdır."),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Ad en az 2 karakter olmalıdır."),
 });
 
 export type InsertLead = z.infer<typeof insertLeadSchema>;

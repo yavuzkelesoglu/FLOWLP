@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Session, SessionData } from "express-session";
-import { createServer, type Server } from "http";
+import type { Server } from "http";
 import { storage } from "./storage";
 import { insertLeadSchema, insertAdminUserSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
@@ -82,22 +82,16 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Admin zaten mevcut. Kurulum yapılamaz." });
       }
       
-      const { email, password, name } = req.body;
+      const { email, password, name } = insertAdminUserSchema.parse(req.body);
       
-      if (!email || !password || !name) {
-        return res.status(400).json({ error: "Email, şifre ve ad gereklidir" });
-      }
-      
-      // Basic email validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
-      }
-      
-      const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
+      const admin = await storage.createAdminUser({ email, password, name });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
     } catch (error: any) {
       console.error("Setup error:", error);
+      if (error.name === "ZodError") {
+        const validationError = fromZodError(error);
+        return res.status(400).json({ error: validationError.message });
+      }
       if (error.message && error.message.includes("pattern")) {
         return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
       }
@@ -190,27 +184,21 @@ export async function registerRoutes(
 
   app.post("/api/admin/users", requireAuth, async (req, res) => {
     try {
-      const { email, password, name } = req.body;
+      const { email, password, name } = insertAdminUserSchema.parse(req.body);
       
-      if (!email || !password || !name) {
-        return res.status(400).json({ error: "Tüm alanlar gereklidir" });
-      }
-      
-      // Basic email validation
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
-      }
-      
-      const existing = await storage.getAdminByEmail(email.trim());
+      const existing = await storage.getAdminByEmail(email);
       if (existing) {
         return res.status(400).json({ error: "Bu email zaten kayıtlı" });
       }
       
-      const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
+      const admin = await storage.createAdminUser({ email, password, name });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
     } catch (error: any) {
       console.error("Error creating admin:", error);
+      if (error.name === "ZodError") {
+        const validationError = fromZodError(error);
+        return res.status(400).json({ error: validationError.message });
+      }
       if (error.message && error.message.includes("pattern")) {
         return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
       }

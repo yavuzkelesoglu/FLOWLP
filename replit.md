@@ -8,6 +8,20 @@ Preferred communication style: Simple, everyday language.
 
 # System Architecture
 
+## Environment Variables
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (Neon recommended) with `sslmode=require`. |
+| `SESSION_SECRET` | ✅ | Secret used by Express session cookies. Generate a long random string. |
+| `RESEND_API_KEY` | ✅ | API key for Resend transactional emails. |
+| `RESEND_FROM_EMAIL` | ⚠️ | Verified sender identity for Resend (e.g., `Flow Coaching <no-reply@example.com>`). Defaults to `bilgi@in-flowtr.com` if omitted. |
+| `AI_INTEGRATIONS_OPENAI_API_KEY` | ⚠️ | OpenAI-compatible API key for the chatbot flow. |
+| `AI_INTEGRATIONS_OPENAI_BASE_URL` | ⚠️ | Custom OpenAI base URL (optional, defaults to official API). |
+| `RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` | ⚠️ | Enable Google reCAPTCHA v3 validation on lead forms when both are set. |
+
+> ℹ️ Vercel deployments must configure these variables in the Project Settings → Environment Variables panel.
+
 ## Frontend Architecture
 
 **Framework & Build Tools:**
@@ -77,10 +91,9 @@ Preferred communication style: Simple, everyday language.
 - API credentials configured via environment variables (`AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`)
 
 **Email Service:**
-- Resend API for transactional email notifications
-- Connection settings retrieved from Replit Connectors API
-- Authentication via Replit identity tokens
-- Lead notifications sent to configurable email addresses
+- Resend API for transactional email notifications (`RESEND_API_KEY`, `RESEND_FROM_EMAIL`)
+- Notification recipient list stored in the database (`notification_emails` setting) and managed from the admin panel
+- Emails are sent immediately after each lead submission (standard form or AI chat)
 
 **Security & Analytics:**
 - Google reCAPTCHA v3 for bot protection on form submissions

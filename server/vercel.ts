@@ -1,4 +1,4 @@
-import express, { type Request, Response, NextFunction } from "express";
+import express from "express";
 import session from "express-session";
 import { registerRoutes } from "./routes";
 import connectPgSimple from "connect-pg-simple";
@@ -14,6 +14,10 @@ declare module "http" {
 }
 
 const PgSession = connectPgSimple(session);
+
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required to run the API on Vercel.");
+}
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,

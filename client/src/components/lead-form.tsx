@@ -19,9 +19,12 @@ import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
 import { useCallback } from "react";
 
 const formSchema = z.object({
-  fullName: z.string().min(2, "Ad Soyad en az 2 karakter olmalıdır."),
-  email: z.string().email("Geçerli bir e-posta adresi giriniz."),
-  phone: z.string().min(10, "Geçerli bir telefon numarası giriniz."),
+  fullName: z.string().trim().min(2, "Ad Soyad en az 2 karakter olmalıdır."),
+  email: z.string().trim().email("Geçerli bir e-posta adresi giriniz."),
+  phone: z
+    .string()
+    .trim()
+    .min(10, "Geçerli bir telefon numarası giriniz."),
   consent: z.boolean().refine((val) => val === true, {
     message: "Devam etmek için onayı kabul etmelisiniz.",
   }),
@@ -43,10 +46,17 @@ export function LeadForm({ className, variant = "default" }: { className?: strin
 
   const submitMutation = useMutation({
     mutationFn: async (values: z.infer<typeof formSchema> & { recaptchaToken?: string }) => {
+      const normalizedValues = {
+        ...values,
+        fullName: values.fullName.trim(),
+        email: values.email.trim(),
+        phone: values.phone.trim(),
+      };
+
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify(normalizedValues),
       });
       
       if (!response.ok) {
