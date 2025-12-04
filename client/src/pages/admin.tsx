@@ -70,19 +70,10 @@ function LoginForm({ onSuccess }: { onSuccess: (user: AdminUser, token: string) 
     setIsLoading(true);
     
     try {
-      const payload = {
-        email: email.trim(),
-        password,
-      };
-
-      if (!payload.email) {
-        throw new Error("Geçerli bir e-posta adresi giriniz.");
-      }
-
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ email, password }),
       });
       
       if (!response.ok) {
@@ -188,25 +179,10 @@ function SetupForm({ onSuccess }: { onSuccess: () => void }) {
     setIsLoading(true);
     
     try {
-      const payload = {
-        name: name.trim(),
-        email: email.trim(),
-        password,
-      };
-
-      if (!payload.name || !payload.email) {
-        toast({ 
-          title: "Hata", 
-          description: "Ad Soyad ve E-posta alanları boş bırakılamaz.", 
-          variant: "destructive" 
-        });
-        return;
-      }
-
       const response = await fetch("/api/auth/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ name, email, password }),
         credentials: "include",
       });
       
@@ -441,19 +417,11 @@ function AdminDashboard({ user, onLogout }: { user: AdminUser; onLogout: () => v
 
   const handleCreateAdmin = (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmedName = newAdminName.trim();
-    const trimmedEmail = newAdminEmail.trim();
-
-    if (!trimmedName || !trimmedEmail) {
-      toast({ title: "Hata", description: "Ad Soyad ve E-posta alanları boş bırakılamaz.", variant: "destructive" });
-      return;
-    }
-
     if (newAdminPassword.length < 6) {
       toast({ title: "Hata", description: "Şifre en az 6 karakter olmalıdır.", variant: "destructive" });
       return;
     }
-    createAdminMutation.mutate({ name: trimmedName, email: trimmedEmail, password: newAdminPassword });
+    createAdminMutation.mutate({ name: newAdminName, email: newAdminEmail, password: newAdminPassword });
   };
 
   return (
@@ -596,15 +564,7 @@ function AdminDashboard({ user, onLogout }: { user: AdminUser; onLogout: () => v
                     <p className="text-xs text-muted-foreground">Birden fazla adres için virgülle ayırın</p>
                   </div>
                   <Button
-                    onClick={() => {
-                      const sanitizedEmails = notificationEmails
-                        .split(",")
-                        .map(email => email.trim())
-                        .filter(Boolean)
-                        .join(", ");
-                      setNotificationEmails(sanitizedEmails);
-                      saveEmailsMutation.mutate(sanitizedEmails);
-                    }}
+                    onClick={() => saveEmailsMutation.mutate(notificationEmails)}
                     disabled={saveEmailsMutation.isPending}
                     data-testid="button-save-emails"
                   >

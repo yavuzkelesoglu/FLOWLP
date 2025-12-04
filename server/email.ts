@@ -1,5 +1,43 @@
-import { Resend } from "resend";
-import { storage } from "./storage";
+import { Resend } from 'resend';
+import { storage } from './storage';
+
+let connectionSettings: any;
+
+async function getCredentials() {
+  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
+  const xReplitToken = process.env.REPL_IDENTITY 
+    ? 'repl ' + process.env.REPL_IDENTITY 
+    : process.env.WEB_REPL_RENEWAL 
+    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
+    : null;
+
+  if (!xReplitToken) {
+    throw new Error('X_REPLIT_TOKEN not found for repl/depl');
+  }
+
+  connectionSettings = await fetch(
+    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
+    {
+      headers: {
+        'Accept': 'application/json',
+        'X_REPLIT_TOKEN': xReplitToken
+      }
+    }
+  ).then(res => res.json()).then(data => data.items?.[0]);
+
+  if (!connectionSettings || (!connectionSettings.settings.api_key)) {
+    throw new Error('Resend not connected');
+  }
+  return { apiKey: connectionSettings.settings.api_key, fromEmail: connectionSettings.settings.from_email };
+}
+
+async function getUncachableResendClient() {
+  const credentials = await getCredentials();
+  return {
+    client: new Resend(credentials.apiKey),
+    fromEmail: credentials.fromEmail
+  };
+}
 
 interface LeadData {
   fullName: string;
@@ -9,15 +47,7 @@ interface LeadData {
 
 export async function sendLeadNotification(lead: LeadData): Promise<boolean> {
   try {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      console.warn("RESEND_API_KEY is not configured. Skipping email notification.");
-      return false;
-    }
-    
-    const fromEmail =
-      process.env.RESEND_FROM_EMAIL || "Flow Coaching <bilgi@in-flowtr.com>";
-    const resend = new Resend(apiKey);
+    const { client, fromEmail } = await getUncachableResendClient();
     
     // Get notification emails from settings
     const emailsSetting = await storage.getSetting("notification_emails");
@@ -38,8 +68,8 @@ export async function sendLeadNotification(lead: LeadData): Promise<boolean> {
       return false;
     }
     
-    const result = await resend.emails.send({
-      from: fromEmail,
+    const result = await client.emails.send({
+      from: 'Flow Coaching <bilgi@in-flowtr.com>',
       to: toEmails,
       subject: `Yeni Form Başvurusu: ${lead.fullName}`,
       html: `

@@ -1,6 +1,6 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import type { Session, SessionData } from "express-session";
-import type { Server } from "http";
+import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertLeadSchema, insertAdminUserSchema } from "@shared/schema";
 import { fromZodError } from "zod-validation-error";
@@ -82,19 +82,16 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Admin zaten mevcut. Kurulum yapılamaz." });
       }
       
-      const { email, password, name } = insertAdminUserSchema.parse(req.body);
+      const { email, password, name } = req.body;
+      
+      if (!email || !password || !name) {
+        return res.status(400).json({ error: "Email, şifre ve ad gereklidir" });
+      }
       
       const admin = await storage.createAdminUser({ email, password, name });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Setup error:", error);
-      if (error.name === "ZodError") {
-        const validationError = fromZodError(error);
-        return res.status(400).json({ error: validationError.message });
-      }
-      if (error.message && error.message.includes("pattern")) {
-        return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
-      }
       res.status(500).json({ error: "Kurulum yapılamadı" });
     }
   });
@@ -184,7 +181,11 @@ export async function registerRoutes(
 
   app.post("/api/admin/users", requireAuth, async (req, res) => {
     try {
-      const { email, password, name } = insertAdminUserSchema.parse(req.body);
+      const { email, password, name } = req.body;
+      
+      if (!email || !password || !name) {
+        return res.status(400).json({ error: "Tüm alanlar gereklidir" });
+      }
       
       const existing = await storage.getAdminByEmail(email);
       if (existing) {
@@ -193,15 +194,8 @@ export async function registerRoutes(
       
       const admin = await storage.createAdminUser({ email, password, name });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error creating admin:", error);
-      if (error.name === "ZodError") {
-        const validationError = fromZodError(error);
-        return res.status(400).json({ error: validationError.message });
-      }
-      if (error.message && error.message.includes("pattern")) {
-        return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
-      }
       res.status(500).json({ error: "Admin oluşturulamadı" });
     }
   });
@@ -259,14 +253,6 @@ export async function registerRoutes(
     } catch (error: any) {
       if (error.name === "ZodError") {
         const validationError = fromZodError(error);
-        console.error("Validation error:", validationError.message);
-        // Return first error message in a user-friendly format
-        const firstError = error.errors?.[0];
-        if (firstError) {
-          return res.status(400).json({ 
-            error: firstError.message || "Geçersiz form verisi. Lütfen tüm alanları kontrol edin." 
-          });
-        }
         return res.status(400).json({ error: validationError.message });
       }
       console.error("Error creating lead:", error);

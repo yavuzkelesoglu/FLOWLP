@@ -163,15 +163,7 @@ export function AIChat({ className }: { className?: string }) {
       }
     }
     
-    const payload = {
-      ...formData,
-      fullName: formData.fullName.trim(),
-      email: formData.email.trim(),
-      phone: formData.phone.trim(),
-      recaptchaToken,
-    };
-    
-    leadMutation.mutate(payload);
+    leadMutation.mutate({ ...formData, recaptchaToken });
   }, [formData, executeRecaptcha, leadMutation, toast]);
 
   return (

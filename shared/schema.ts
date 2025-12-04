@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, boolean } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const leads = pgTable("leads", {
@@ -33,35 +34,18 @@ export const authTokens = pgTable("auth_tokens", {
   expiresAt: timestamp("expires_at").notNull(),
 });
 
-// Manual Zod schemas to avoid UUID pattern validation issues with createInsertSchema
-export const insertLeadSchema = z.object({
-  fullName: z.string().trim().min(2, "Ad Soyad en az 2 karakter olmalıdır."),
-  email: z.string().trim().email("Geçerli bir e-posta adresi giriniz"),
-  phone: z
-    .string()
-    .trim()
-    .min(10, "Geçerli bir telefon numarası giriniz."),
-  consent: z
-    .boolean()
-    .refine((value) => value === true, {
-      message: "Devam etmek için KVKK onayını kabul etmelisiniz.",
-    }),
+export const insertLeadSchema = createInsertSchema(leads).omit({
+  id: true,
+  createdAt: true,
 });
 
-export const insertSettingSchema = z.object({
-  key: z.string().trim().min(1, "Anahtar değeri gereklidir"),
-  value: z.string().trim().min(1, "Değer alanı gereklidir"),
+export const insertSettingSchema = createInsertSchema(settings).omit({
+  id: true,
 });
 
-export const insertAdminUserSchema = z.object({
-  email: z.string().trim().email("Geçerli bir e-posta adresi giriniz"),
-  password: z
-    .string()
-    .min(6, "Şifre en az 6 karakter olmalıdır."),
-  name: z
-    .string()
-    .trim()
-    .min(2, "Ad en az 2 karakter olmalıdır."),
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({
+  id: true,
+  createdAt: true,
 });
 
 export type InsertLead = z.infer<typeof insertLeadSchema>;

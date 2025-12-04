@@ -1,17 +1,306 @@
 import express, { type Request, Response, NextFunction } from "express";
-import { storage } from "../server/storage";
-import { insertLeadSchema } from "../shared/schema";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
+import { sql as sqlTemplate } from "drizzle-orm";
+import { pgTable, text, varchar, timestamp, boolean } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
+import { z } from "zod";
+import { desc, eq, and, gt } from "drizzle-orm";
+import bcrypt from "bcrypt";
+import { randomBytes } from "crypto";
 import { fromZodError } from "zod-validation-error";
-import { sendLeadNotification } from "../server/email";
-import { chat } from "../server/chat";
+import OpenAI from "openai";
+import { Resend } from "resend";
 
-const app = express();
+// ===== DATABASE SCHEMA =====
+const leads = pgTable("leads", {
+  id: varchar("id").primaryKey().default(sqlTemplate`gen_random_uuid()`),
+  fullName: text("full_name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone").notNull(),
+  consent: boolean("consent").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
 
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
+const settings = pgTable("settings", {
+  id: varchar("id").primaryKey().default(sqlTemplate`gen_random_uuid()`),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+});
+
+const adminUsers = pgTable("admin_users", {
+  id: varchar("id").primaryKey().default(sqlTemplate`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  password: text("password").notNull(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+const authTokens = pgTable("auth_tokens", {
+  id: varchar("id").primaryKey().default(sqlTemplate`gen_random_uuid()`),
+  token: text("token").notNull().unique(),
+  adminId: varchar("admin_id").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
+const insertLeadSchema = createInsertSchema(leads).omit({
+  id: true,
+  createdAt: true,
+});
+
+type InsertLead = z.infer<typeof insertLeadSchema>;
+type Lead = typeof leads.$inferSelect;
+type AdminUser = typeof adminUsers.$inferSelect;
+type InsertAdminUser = { email: string; password: string; name: string };
+
+// ===== DATABASE CONNECTION =====
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL environment variable is not set");
+}
+
+const sql = neon(process.env.DATABASE_URL);
+const db = drizzle(sql);
+
+// ===== STORAGE =====
+class DBStorage {
+  async createLead(insertLead: InsertLead): Promise<Lead> {
+    const [lead] = await db.insert(leads).values(insertLead).returning();
+    return lead;
+  }
+
+  async getLeads(): Promise<Lead[]> {
+    return await db.select().from(leads).orderBy(desc(leads.createdAt));
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    const [setting] = await db.select().from(settings).where(eq(settings.key, key));
+    return setting?.value || null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    const existing = await this.getSetting(key);
+    if (existing !== null) {
+      await db.update(settings).set({ value }).where(eq(settings.key, key));
+    } else {
+      await db.insert(settings).values({ key, value });
+    }
+  }
+
+  async createAdminUser(user: InsertAdminUser): Promise<AdminUser> {
+    const hashedPassword = await bcrypt.hash(user.password, 10);
+    const [admin] = await db.insert(adminUsers).values({
+      ...user,
+      password: hashedPassword,
+    }).returning();
+    return admin;
+  }
+
+  async getAdminByEmail(email: string): Promise<AdminUser | null> {
+    const [admin] = await db.select().from(adminUsers).where(eq(adminUsers.email, email));
+    return admin || null;
+  }
+
+  async getAdminById(id: string): Promise<AdminUser | null> {
+    const [admin] = await db.select().from(adminUsers).where(eq(adminUsers.id, id));
+    return admin || null;
+  }
+
+  async getAllAdmins(): Promise<AdminUser[]> {
+    return await db.select().from(adminUsers).orderBy(desc(adminUsers.createdAt));
+  }
+
+  async deleteAdmin(id: string): Promise<void> {
+    await db.delete(adminUsers).where(eq(adminUsers.id, id));
+  }
+
+  async validateAdminPassword(email: string, password: string): Promise<AdminUser | null> {
+    const admin = await this.getAdminByEmail(email);
+    if (!admin) return null;
+    
+    const isValid = await bcrypt.compare(password, admin.password);
+    return isValid ? admin : null;
+  }
+
+  async createAuthToken(adminId: string): Promise<string> {
+    const token = randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    
+    await db.insert(authTokens).values({
+      token,
+      adminId,
+      expiresAt,
+    });
+    
+    return token;
+  }
+
+  async validateAuthToken(token: string): Promise<string | null> {
+    const [result] = await db.select()
+      .from(authTokens)
+      .where(and(
+        eq(authTokens.token, token),
+        gt(authTokens.expiresAt, new Date())
+      ));
+    
+    return result?.adminId || null;
+  }
+
+  async deleteAuthToken(token: string): Promise<void> {
+    await db.delete(authTokens).where(eq(authTokens.token, token));
   }
 }
+
+const storage = new DBStorage();
+
+// ===== CHAT =====
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const SYSTEM_PROMPT = `Sen, Flow Coaching & Leadership Institute'da koçluk eğitimi hakkında bilgi veren bir AI eğitim danışmanısın. Aynı zamanda satış temsilcisi gibi yönlendirici ve ikna edici şekilde konuşursun.
+
+GÖREVLER:
+1. Kullanıcının sorularını yanıtla
+2. Koçluk eğitimi hakkında bilgi ver
+3. Konuşma boyunca profesyonel ama sıcak bir ton kullan
+4. Kullanıcıyı eğitime kayıt olmaya yönlendir
+5. "İstersen seni hemen ön kayda alabilirim" gibi satış CTA'ları kullan
+6. Kullanıcı iletişim bilgisi paylaşmak isterse, ekrandaki formu doldurmasını söyle
+
+EĞİTİM BİLGİLERİ:
+- Program: Flow Temel Koçluk Okulu - ICF Onaylı Sertifika Programı
+- Format: Tamamen Online (Canlı dersler)
+- Süre: 6 Modül, toplam 125+ saat
+- Akreditasyon: ICF Level 1 & Level 2
+- Fiyat bilgisi için detaylı bilgi almak isteyenlere danışman yönlendirmesi yap
+
+MODÜLLER:
+1. Koçluğa Giriş ve Temel İlkeler
+2. Aktif Dinleme ve Güçlü Sorular
+3. Hedef Belirleme ve Aksiyon Planlama
+4. Değerler ve İnançlarla Çalışma
+5. Koçluk Araçları ve Modelleri
+6. Süpervizyon ve Sertifikasyon
+
+ÖNEMLİ:
+- Türkçe konuş
+- Samimi ama profesyonel ol
+- Soruları kısa ve net tut
+- Her mesajda bir soru veya CTA olsun
+- Cevapları kısa tut (maksimum 2-3 cümle)`;
+
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+async function chat(messages: ChatMessage[]): Promise<{ message: string }> {
+  try {
+    const messagesWithSystem: ChatMessage[] = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...messages
+    ];
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: messagesWithSystem,
+      temperature: 0.7,
+      max_tokens: 300,
+    });
+
+    const assistantMessage = response.choices[0]?.message?.content || "Üzgünüm, bir hata oluştu.";
+
+    return {
+      message: assistantMessage,
+    };
+  } catch (error) {
+    console.error("Chat error:", error);
+    throw error;
+  }
+}
+
+// ===== EMAIL =====
+interface LeadData {
+  fullName: string;
+  email: string;
+  phone: string;
+}
+
+async function sendLeadNotification(lead: LeadData): Promise<boolean> {
+  try {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      console.log("RESEND_API_KEY not set, skipping email");
+      return false;
+    }
+
+    const client = new Resend(apiKey);
+    
+    const emailsSetting = await storage.getSetting("notification_emails");
+    
+    if (!emailsSetting || emailsSetting.trim() === "") {
+      console.log("No notification emails configured, skipping email");
+      return false;
+    }
+    
+    const toEmails = emailsSetting
+      .split(",")
+      .map(e => e.trim())
+      .filter(e => e.length > 0 && e.includes("@"));
+    
+    if (toEmails.length === 0) {
+      console.log("No valid notification emails found, skipping email");
+      return false;
+    }
+    
+    const result = await client.emails.send({
+      from: 'Flow Coaching <bilgi@in-flowtr.com>',
+      to: toEmails,
+      subject: `Yeni Form Başvurusu: ${lead.fullName}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #0d9488; border-bottom: 2px solid #0d9488; padding-bottom: 10px;">
+            Yeni Form Başvurusu
+          </h2>
+          <p style="font-size: 16px; color: #333;">
+            Flow Temel Koçluk Okulu için yeni bir başvuru alındı:
+          </p>
+          <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+            <tr>
+              <td style="padding: 10px; border: 1px solid #ddd; background: #f9f9f9; font-weight: bold; width: 120px;">Ad Soyad</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">${lead.fullName}</td>
+            </tr>
+            <tr>
+              <td style="padding: 10px; border: 1px solid #ddd; background: #f9f9f9; font-weight: bold;">E-posta</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">
+                <a href="mailto:${lead.email}" style="color: #0d9488;">${lead.email}</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 10px; border: 1px solid #ddd; background: #f9f9f9; font-weight: bold;">Telefon</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">
+                <a href="tel:${lead.phone}" style="color: #0d9488;">${lead.phone}</a>
+              </td>
+            </tr>
+          </table>
+          <p style="font-size: 14px; color: #666; margin-top: 20px;">
+            Bu e-posta Flow Coaching & Leadership Institute web sitesinden otomatik olarak gönderilmiştir.
+          </p>
+        </div>
+      `
+    });
+    
+    console.log('Email sent successfully to:', toEmails, result);
+    return true;
+  } catch (error) {
+    console.error('Failed to send email notification:', error);
+    return false;
+  }
+}
+
+// ===== EXPRESS APP =====
+const app = express();
 
 interface AuthenticatedRequest extends Request {
   adminId?: string;
@@ -63,16 +352,10 @@ async function verifyRecaptcha(token: string): Promise<{ success: boolean; score
   }
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
+app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Auth routes
 app.post("/api/auth/setup", async (req, res) => {
   try {
     const existingAdmins = await storage.getAllAdmins();
@@ -86,19 +369,10 @@ app.post("/api/auth/setup", async (req, res) => {
       return res.status(400).json({ error: "Email, şifre ve ad gereklidir" });
     }
     
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
-    }
-    
-    const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
+    const admin = await storage.createAdminUser({ email, password, name });
     res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Setup error:", error);
-    if (error.message && error.message.includes("pattern")) {
-      return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
-    }
     res.status(500).json({ error: "Kurulum yapılamadı" });
   }
 });
@@ -169,6 +443,7 @@ app.get("/api/auth/me", requireAuth, async (req, res) => {
   });
 });
 
+// Admin routes
 app.get("/api/admin/users", requireAuth, async (req, res) => {
   try {
     const admins = await storage.getAllAdmins();
@@ -187,24 +462,15 @@ app.post("/api/admin/users", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Tüm alanlar gereklidir" });
     }
     
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
-    }
-    
-    const existing = await storage.getAdminByEmail(email.trim());
+    const existing = await storage.getAdminByEmail(email);
     if (existing) {
       return res.status(400).json({ error: "Bu email zaten kayıtlı" });
     }
     
-    const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
+    const admin = await storage.createAdminUser({ email, password, name });
     res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error creating admin:", error);
-    if (error.message && error.message.includes("pattern")) {
-      return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
-    }
     res.status(500).json({ error: "Admin oluşturulamadı" });
   }
 });
@@ -226,6 +492,7 @@ app.delete("/api/admin/users/:id", requireAuth, async (req, res) => {
   }
 });
 
+// Lead routes
 app.post("/api/leads", async (req, res) => {
   try {
     const { recaptchaToken, ...formData } = req.body;
@@ -256,14 +523,6 @@ app.post("/api/leads", async (req, res) => {
   } catch (error: any) {
     if (error.name === "ZodError") {
       const validationError = fromZodError(error);
-      console.error("Validation error:", validationError.message);
-      // Return first error message in a user-friendly format
-      const firstError = error.errors?.[0];
-      if (firstError) {
-        return res.status(400).json({ 
-          error: firstError.message || "Geçersiz form verisi. Lütfen tüm alanları kontrol edin." 
-        });
-      }
       return res.status(400).json({ error: validationError.message });
     }
     console.error("Error creating lead:", error);
@@ -281,6 +540,7 @@ app.get("/api/leads", requireAuth, async (req, res) => {
   }
 });
 
+// Settings routes
 app.get("/api/settings/notification-emails", requireAuth, async (req, res) => {
   try {
     const emails = await storage.getSetting("notification_emails");
@@ -305,6 +565,7 @@ app.post("/api/settings/notification-emails", requireAuth, async (req, res) => {
   }
 });
 
+// Chat route
 app.post("/api/chat", async (req, res) => {
   try {
     const { messages } = req.body;
