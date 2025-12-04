@@ -34,16 +34,35 @@ export const authTokens = pgTable("auth_tokens", {
   expiresAt: timestamp("expires_at").notNull(),
 });
 
-export const insertLeadSchema = createInsertSchema(leads).omit({
+// Create base schemas and override ID validation to be more flexible
+const baseLeadSchema = createInsertSchema(leads, {
+  id: z.string().optional(),
+  email: z.string().email(),
+  phone: z.string().min(1),
+  fullName: z.string().min(1),
+});
+
+const baseSettingSchema = createInsertSchema(settings, {
+  id: z.string().optional(),
+});
+
+const baseAdminUserSchema = createInsertSchema(adminUsers, {
+  id: z.string().optional(),
+  email: z.string().email(),
+  password: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export const insertLeadSchema = baseLeadSchema.omit({
   id: true,
   createdAt: true,
 });
 
-export const insertSettingSchema = createInsertSchema(settings).omit({
+export const insertSettingSchema = baseSettingSchema.omit({
   id: true,
 });
 
-export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({
+export const insertAdminUserSchema = baseAdminUserSchema.omit({
   id: true,
   createdAt: true,
 });

@@ -88,10 +88,19 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Email, şifre ve ad gereklidir" });
       }
       
-      const admin = await storage.createAdminUser({ email, password, name });
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
+      }
+      
+      const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Setup error:", error);
+      if (error.message && error.message.includes("pattern")) {
+        return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
+      }
       res.status(500).json({ error: "Kurulum yapılamadı" });
     }
   });
@@ -187,15 +196,24 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Tüm alanlar gereklidir" });
       }
       
-      const existing = await storage.getAdminByEmail(email);
+      // Basic email validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: "Geçerli bir e-posta adresi giriniz" });
+      }
+      
+      const existing = await storage.getAdminByEmail(email.trim());
       if (existing) {
         return res.status(400).json({ error: "Bu email zaten kayıtlı" });
       }
       
-      const admin = await storage.createAdminUser({ email, password, name });
+      const admin = await storage.createAdminUser({ email: email.trim(), password, name: name.trim() });
       res.status(201).json({ id: admin.id, email: admin.email, name: admin.name });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating admin:", error);
+      if (error.message && error.message.includes("pattern")) {
+        return res.status(400).json({ error: "Geçersiz veri formatı. Lütfen tüm alanları kontrol edin." });
+      }
       res.status(500).json({ error: "Admin oluşturulamadı" });
     }
   });
