@@ -271,6 +271,14 @@ export async function registerRoutes(
     } catch (error: any) {
       if (error.name === "ZodError") {
         const validationError = fromZodError(error);
+        console.error("Validation error:", validationError.message);
+        // Return first error message in a user-friendly format
+        const firstError = error.errors?.[0];
+        if (firstError) {
+          return res.status(400).json({ 
+            error: firstError.message || "Geçersiz form verisi. Lütfen tüm alanları kontrol edin." 
+          });
+        }
         return res.status(400).json({ error: validationError.message });
       }
       console.error("Error creating lead:", error);

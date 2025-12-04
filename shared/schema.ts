@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, timestamp, boolean } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 export const leads = pgTable("leads", {
@@ -34,37 +33,23 @@ export const authTokens = pgTable("auth_tokens", {
   expiresAt: timestamp("expires_at").notNull(),
 });
 
-// Create base schemas and override ID validation to be more flexible
-const baseLeadSchema = createInsertSchema(leads, {
-  id: z.string().optional(),
-  email: z.string().email(),
-  phone: z.string().min(1),
-  fullName: z.string().min(1),
+// Manual Zod schemas to avoid UUID pattern validation issues with createInsertSchema
+export const insertLeadSchema = z.object({
+  fullName: z.string().min(1, "Ad Soyad gereklidir"),
+  email: z.string().email("Geçerli bir e-posta adresi giriniz"),
+  phone: z.string().min(1, "Telefon numarası gereklidir"),
+  consent: z.boolean().default(false),
 });
 
-const baseSettingSchema = createInsertSchema(settings, {
-  id: z.string().optional(),
+export const insertSettingSchema = z.object({
+  key: z.string().min(1),
+  value: z.string().min(1),
 });
 
-const baseAdminUserSchema = createInsertSchema(adminUsers, {
-  id: z.string().optional(),
-  email: z.string().email(),
-  password: z.string().min(1),
-  name: z.string().min(1),
-});
-
-export const insertLeadSchema = baseLeadSchema.omit({
-  id: true,
-  createdAt: true,
-});
-
-export const insertSettingSchema = baseSettingSchema.omit({
-  id: true,
-});
-
-export const insertAdminUserSchema = baseAdminUserSchema.omit({
-  id: true,
-  createdAt: true,
+export const insertAdminUserSchema = z.object({
+  email: z.string().email("Geçerli bir e-posta adresi giriniz"),
+  password: z.string().min(1, "Şifre gereklidir"),
+  name: z.string().min(1, "Ad gereklidir"),
 });
 
 export type InsertLead = z.infer<typeof insertLeadSchema>;
