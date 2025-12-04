@@ -116,6 +116,12 @@ export function AIChat({ className }: { className?: string }) {
       return response.json();
     },
     onSuccess: () => {
+      if (typeof window !== 'undefined' && (window as any).gtag) {
+        (window as any).gtag('event', 'conversion', {
+          'send_to': 'AW-11258697181/UKELCIGryMkbEN2ryPgp'
+        });
+      }
+      
       setFormSubmitted(true);
       setShowForm(false);
       setMessages(prev => [...prev, { 
